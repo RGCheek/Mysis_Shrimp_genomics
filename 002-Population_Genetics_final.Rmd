@@ -1,0 +1,844 @@
+---
+title: "002-Population_genetics"
+author: "Rebecca Cheek"
+date: "12/12/2020"
+output: html_document
+---
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+##############
+### Libraries 
+##############
+library(tidyverse)
+library(ade4)
+library(LEA)
+library(adegenet)
+library(spdep)
+library(hierfstat)
+library(PopGenReport)
+library(ggthemes)
+library(mmod)
+library(spdep)
+library(MASS)
+library("poppr")
+library("pegas")
+library("ape")
+library(geodist)
+library(vcfR)
+library(vegan)
+library(hierfstat)
+library(lme4)
+library(gdata)
+library(ggthemes)
+library(psych)
+library(maptools)
+library(rgdal)
+library(gridExtra)
+library(RColorBrewer)
+
+set.seed(666)
+
+```
+
+We have individuals from 8 lakes, plus two phenotypes in Gross Lake where a "jumbo" and "regular" morph apparently exist in the same lake. 
+
+No individuals failed our missingness theshold of 60%
+Carter = 20
+Clear_Water = 23
+Dillon = 20
+Grand = 20
+GGross = 15
+RGross = 14
+Jefferson = 20
+Lower_Twin = 16
+Ruedi = 20
+
+
+
+First, check to see how much missing data is in the non-imputed missing data and see if it differs from each population as this could skew population structure analyses. We will also re-run our PCA with a more stringent filter regime to see how this affects our results. If the results differ, then that could indicate that our results are biased by missing data. 
+
+```{r}
+
+#read in and convert genomic data using the .raw Plink file thats been imputed and includes all the SNPs 
+
+gen <- read.PLINK("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/neutral_snps/non-imputed/mysis_clean_neutral.raw", parallel = F)
+
+dim(gen)
+# 168 33886
+
+
+#RDA require complete data frames (i.e., no missing genetic data). 
+#convert to a data frame
+gen.imp <- as.data.frame(gen)
+
+#convert the rownames to collumn
+gen.imp$individual_id <- rownames(gen.imp)
+
+
+#Read in the environmental data
+env <- read.csv("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/mysis_env.csv")
+
+
+gen.imp <- left_join(gen.imp, env[,c(1,5)], by="individual_id")
+
+
+#count the number of NA's for each lake
+#this takes a long time to run
+# gen.imp  %>% 
+#   group_by(Lake_name) %>% 
+#   summarise_all(~sum(is.na(.))) %>% 
+#   transmute(Lake_name, sumNA = rowSums(.[-1]))
+
+
+# Lake_name      sumNA/total number sites
+# 
+# Carter      	248214/5716032	=	  0.04342418	
+# Clear_Water  	286016/5716032	=		0.05003751
+# Dillon      	261366/5716032	=	  0.04572508	
+# GGross       	205422/5716032	=		0.03593787
+# Grand       	233662/5716032	=		0.04087836
+# Jefferson   	257336/5716032  =   0.04502004
+# Lower_Twin  	199138/5716032 	=		0.0348385
+# RGross      	181020/5716032	=		0.03166882
+# Ruedi	        246914/5716032  =   0.04319675
+
+```
+
+
+To get a sense of the neutral population structure, we will use the liberal "neutral" dataset that has the 69 puntatively adaptive loci flagged by PCAdapt filtered out. So 16,943 imputed SNPs for neutral genetic structure using PCA and DAPC. 
+
+First, lets read in the data and convert them into the relevant formats for some of the analyses to start...
+
+```{r}
+
+# Load Data
+
+
+#read in filtered data as a genind object & convert to different formats 
+
+
+mysisvcfr <- read.vcfR("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/mysis_clean_imputed.vcf")
+
+mysis_genind <-vcfR2genind(mysisvcfr)
+
+mysis_geno <- vcf2geno(input.file = "C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/mysis_clean_imputed.vcf")
+
+
+#read in raw plink files and convert to genlight and matrix
+mysisgen <- read.PLINK("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/mysis_clean_imputed.raw", map.file ="C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/mysis_clean_imputed.map",x= "genlight", n.cores=NULL, parallel = F)
+
+gen <- read.PLINK("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/mysis_clean_imputed.raw", parallel = F)
+
+gen <- as.matrix(gen)
+
+#make sure there are no NAs
+sum(is.na(gen)) 
+
+
+genfile <- as.matrix(gen[,-1], row.names = FALSE, col.names=FALSE)
+
+
+#convert to matrix 
+genfile <- as.matrix(mysisgen [,-1], row.names = FALSE, col.names=FALSE)
+
+
+
+genfile <- as.matrix(mysisgen, row.names = FALSE, col.names=FALSE)
+
+mode(genfile) <- 'numeric'  #needs to be numeric for some reason and matrix was character
+
+
+
+
+#Import the environmental data with the locality information, but filter out the individuals that were removed during filtering  
+
+env <- read.csv("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/mysis_env.csv")
+
+env$Lake_name <- as.factor(env$Lake_name) 
+
+#make sure the factor levels are correct
+env <- env %>% 
+  mutate(Lake_name = recode_factor(Lake_name,"Clear_Water"= "Clearwater", "Lower_Twin"="Lower Twin","GGross"="Gross (Jumbo)","RGross"="Gross (Regular)")) 
+ 
+
+
+# #If I wanted to filter individuals use anti_join
+# mysis_filtered <- read.csv("C:/Users/Rebecca/Colostate/GhalamborLab - mysis/data/filtered_data/filtered_individuals.csv") %>% 
+#   dplyr::rename("individual_id"="INDIVIDUALS")
+# 
+# 
+# pred <- anti_join(env, mysis_filtered,  by="individual_id")
+
+
+#order the pred file so that it matches with the genetic data 
+#first extract the rownames form the genfile
+indiv_id <- rownames(genfile)
+
+env <- env[order(match(env[,1], rownames(genfile))),]
+
+
+#make sure the order of the phenotype and the genetic data are the same
+identical(env$individual_id, rownames(genfile))
+
+
+#Need to first assign all individuals to the correct population
+
+mysis_genind@pop <- as.factor(env$Lake_name) 
+
+
+#convert to genlight
+mysis_genlight <-vcfR2genlight(mysisvcfr)
+
+#convert to genepop
+mysis.pop<- adegenet::genind2genpop(mysis_genind)
+
+
+
+```
+
+
+We can first run SNMF from the R package LEA to determine our most likely value of K and create and then use lfmm to impute the missing values in the dataset that we can use for additional analyses that require complete dataframes. The structure like plots will  helps us determine if individuals from different lakes can be distinguished from each other, or if it would be more accurate to consider them all one population since they share such a recent genetic lineage. 
+		Because we have 8 lakes and one lake with potential genetic differentiation (giant vs. regular morphs in Gross), we will test k values from 1:9 with 10 replicate runs. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+
+#############################
+# SNMF analysis in R using LEA & LFMM
+##########################
+
+#determine the most likely value of K (clusters). Choosing the number of clusters is based on the cross-entropy criterion. This criterion
+# is also used by the program snmf. The cross-entropy criterion is based on the prediction of a fraction of masked genotypes (matrix completion), and on the cross-validation approach. Smaller values of the cross-entropy criterion usually mean better
+# runs. We perform runs for 9 values of K, and choose the value of K for which the cross-entropy
+# curve exhibits a plateau or exhibits a clear minimum value. 
+
+mysis_geno <- vcf2geno(input.file = "C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/mysis_clean_imputed.vcf")
+
+
+mysis_k  <- snmf(mysis_geno, K = 1:9, ploidy = 2, rep=10, entropy = T, alpha = 100, project= "new")
+
+# plot cross-entroypy criterion for each K
+K <-summary(mysis_k)$crossEntropy %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("temp") %>%
+  mutate(K = as.numeric(str_extract(temp, "(\\d)+"))) %>%
+  dplyr::select(-temp)
+
+# choose K for which the function plateaus or increases sharply
+kplot <-ggplot(K, aes(x = K, y = mean)) +
+  geom_line(color = "black", size = 0.25 ) +
+  geom_segment(aes(x = K, y = min, xend = K, yend = max)) +
+  geom_point(shape = 21, size = 4, color = "black", fill = "darkorange") +
+  scale_x_continuous(breaks = seq(0, 10, by = 1)) +
+  labs(x = "number of ancestral populations", y = "cross-entropy criterion") +
+  theme_few()
+
+kplot
+
+
+#looks like k=1 is the most likely number of clusters with the imputed data since cross entropy increases with more clusters but K=2 also looks like it has 
+#fairly minimal entropy. 
+# identify best run for chosen K value
+run <- which.min(cross.entropy(mysis_k, K = 2))
+
+# extract q.matrix. The qmatrix object contains the matrix of ancestry coefficients
+#for each individual for K clusters
+
+q.matrix <- Q(mysis_k, K = 2, run = run) %>% 
+  as.data.frame() 
+
+mysis.q.matrix <- cbind(env[,c(1,4,5,7:8)], q.matrix) %>% 
+  arrange(desc(Easting)) %>% 
+  gather(cluster, value, V1:V2, factor_key=TRUE) %>% 
+  group_by(individual_id)
+
+
+mysis.q.matrix <- mysis.q.matrix  %>% 
+   mutate(Lake_name = recode_factor(Lake_name,"Clear_Water"= "Clear Water", "Lower_Twin"="Lower Twin","GGross"="Gross (Jumbo)","RGross"="Gross (Regular)")) 
+  
+#order by the lakes in the correct order
+Lake <- as.data.frame(c("Carter", "Clear Water", "Dillon","Grand", "Gross (Jumbo)", "Gross (Regular)", "Jefferson", "Lower Twin", "Ruedi"))
+names(Lake)[1] <- "Lake_name"
+
+mysis.q.matrix <- left_join(Lake,mysis.q.matrix, by="Lake_name", all.y=T) 
+
+
+mysis.q.matrix$individual_id <- reorder(as_factor(mysis.q.matrix$individual_id), as_factor(mysis.q.matrix$Lake_name))
+
+
+#Lets visualise the results with a barplot
+snmf.bar <- ggplot(mysis.q.matrix,aes(fill=cluster, y=value, x=individual_id))+
+  geom_bar( stat="identity",  width=.75 ) +
+    scale_fill_manual(values=c("royalblue","wheat"))+
+  labs(x = "", y = "Ancestry")+
+  theme_few()+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none",
+              axis.ticks.x = element_blank())
+  
+
+snmf.bar
+
+```
+We can see that K=1 is the number of ancestral populations most supported my minimum cross entropy criterion. Which makes complete sense given the seeding of shrimp from the same source population (s). However, looking at K=2 which had a fairly low cross entropy we see there a lot of mixing with perhaps some separation of Gross Lake individuals. 
+
+
+01- PCA
+  Principal Components Analysis is a multivarate analysis that allows you to determine if population structure (genetic differentiation) is evident, and how much of the genetic variance may be explained by our first two components.
+  We will do a "final" PCA using LEA. But will validate our result here. 
+
+  
+```{r}  
+library(factoextra)
+library(magrittr)
+library(SNPRelate)
+
+
+mysisvcfr <- read.vcfR("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/mysis_clean_imputed.vcf")
+
+mysis_genind <-vcfR2genind(mysisvcfr)
+
+#### Testing
+#As recommended by T. Jombart, with the function find.clusters() we used the maximum possible number of PCA axis which is 18 here (2* number of clusters). 
+set.seed(1000) # Setting a seed for a consistent result
+grp <- find.clusters(mysis_genind, max.n.clust = 9, n.pca = 18, choose.n.clust = FALSE) 
+
+#The K means procedure detected 3 groups. We will use this number of group in the discriminant analysis (function dapc()). 
+grp$grp
+
+mysis_pca<-dudi.pca(genfile, scannf = FALSE, nf = 2)
+
+dapc1 <- dapc(mysis_genind, grp$grp, n.pca = 18, n.da = 9) 
+scatter(dapc1) # plot of the groups
+
+#looks like there could be 3 groups
+
+factoextra::fviz_eig(mysis_pca) #looks like the first PCA axis explains most of the variance
+
+groups <- as.factor(env$Lake_name)
+
+s.class(mysis_pca$li,
+             fac= groups, # color by groups
+            col = rainbow(9),
+        cellipse = 0)
+
+#Looks like individuals mostly cluster on top of each other apart from Gross
+
+```
+
+We used PCAdapt to filter out strong Fst outliers from the dataset that could be biasing our neutral population genetic inference. We used a K=1 for PCAdapt given K=1 having the most support from snmf. Using rda function without predictors to create a PCA.
+
+```{r}
+#plot out the imputed snps following filtering and imputation
+
+mysis_gen <- read.PLINK("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/neutral_snps/non-imputed/mysis_clean_neutral.raw", parallel = F)
+
+dim(mysis_gen)
+
+#should be 16,943 snps following preliminary filters and removal of the 69 outliers from PCAdapt
+
+#read plink reads it in as a genlight but scripts wants a genind so convert to a dataframe and then genind 
+
+gen <-as.matrix(mysis_gen)
+
+mode(gen) <- "numeric"
+
+sum(is.na(gen)) 
+
+
+#now we can use the rda function from the vegan package which is the same thing as a pca
+
+mysis.pca1 <- rda(gen) #PCA using rda function 
+
+
+summary(mysis.pca1)$cont 
+
+screeplot(mysis.pca1, main = "Screeplot: Eigenvalues of Predictor Variables")
+
+
+#We'll store our synthetic PC axis predictor as pred.PC1 for use in mapping.
+
+pred.PC1 <- scores(mysis.pca1, choices=1, display="sites", scaling=0)
+
+
+#quick and dirty plot
+plot(pred.PC1)
+
+#order the pred file so that it matches with the genetic data 
+#first extract the rownames form the genfile
+indiv_id <- rownames(gen)
+
+env <- env[order(match(env[,1], rownames(gen))),]
+
+
+#make sure the order of the phenotype and the genetic data are the same
+identical(env$individual_id, rownames(gen))
+
+
+
+##plot PCA in ordination space
+###### To highlight individuals by library 
+#custom color pallet
+myCol2 <- c("#ff7f00","#1f78b4","#ffff33","#a6cee3","#33a02c", "#C273F9", "#F973CA", "#17A589","#e31a1c" ) # 9 colors for our Lakes plus 2 phenotypes
+
+
+#Import the environmental data with the locality information, but filter out the individuals that were removed during filtering  
+
+env <- read.csv("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/mysis_env.csv")
+
+env$Lake_name <- as.factor(env$Lake_name) 
+
+#make sure the factor levels are correct
+env <- env %>% 
+  mutate(Lake_name = recode_factor(Lake_name,"Clear_Water"= "Clear Water", "Lower_Twin"="Lower Twin","GGross"="Gross (Jumbo)","RGross"="Gross (Regular)")) 
+ 
+
+
+#Extract the scores from the pca
+#Be sure to scale everything symmetrically by using the scaling=3 argument which will scale based on the square root of the eigenvalues
+mysis_sam_sco <- scores(mysis.pca1, choices = 1:3, display = "sites", scaling=3)
+mysis_sam_tbl <- as_tibble(mysis_sam_sco)
+mysis_sam_tbl <- mutate(mysis_sam_tbl, individual_id=rownames(mysis_sam_sco),
+                       ccatype = "sites")
+
+mysis_sam_tbl <- left_join(env, mysis_sam_tbl, by="individual_id")
+
+
+#extract the loading scores of the snps 
+
+mysis_spp_sco <- scores(mysis.pca1, display = "species", scaling=3)
+mysis_spp_tbl <- as_tibble(mysis_spp_sco)
+mysis_spp_tbl <- mutate(mysis_spp_tbl, vgntxt=rownames(mysis_spp_sco),
+                       ccatype = "species")
+
+mysis_sam_tbl$Lake_name <- factor(mysis_sam_tbl$Lake_name, 
+  levels=c("Carter", "Clear Water", "Dillon","Grand", "Gross (Jumbo)", "Gross (Regular)", "Jefferson", "Lower Twin", "Ruedi"))
+
+#with ggplot
+pc_plot_12 <- ggplot(data=mysis_sam_tbl,aes(x=PC1, y=PC2, fill=Lake_name)) +
+    scale_fill_manual(values = myCol2)+
+  #stat_ellipse(data=mysis_sam_tbl,aes(x=PC1, y=PC2, color=Lake_name),type = "norm") + #add ellipses
+  geom_point(shape=21,  color="black", size=4) +# the shrimp
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_vline(xintercept = 0, lty = 2) +
+   theme_few()+
+   labs(fill = "Lake Name")+ xlab("PC Axis 1 (1.19%)") + ylab("PC Axis 2 (0.82%)") +
+   theme(
+  #legend.position =c(.18,.28),
+   #      legend.justification = c("right", "top"),
+   #      legend.title = element_text(size=12, face="bold"),
+   #      legend.text = element_text(size=12, face="bold"),
+        axis.title=element_text(colour="black", size = 15,face="bold"),
+        axis.text=element_text(colour="black", size = 13,face="bold"),
+        plot.background = element_rect(fill = "transparent",colour = NA))
+
+pc_plot_12
+
+pc_plot_13 <- ggplot(data=mysis_sam_tbl,aes(x=PC1, y=PC3, fill=Lake_name)) +
+    scale_fill_manual(values = myCol2)+
+  #stat_ellipse(data=mysis_sam_tbl,aes(x=PC1, y=PC2, color=Lake_name),type = "norm") + #add ellipses
+  geom_point(shape=21,  color="black", size=4) +# the shrimp
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_vline(xintercept = 0, lty = 2) +
+   theme_few()+
+   labs(fill = "Lake Name")+ xlab("PC Axis 1 (1.19%)") + ylab("PC Axis 3 (0.81%)") +
+   theme(
+     # legend.position =c(.18,.28),
+     #    legend.justification = c("right", "top"),
+     #    legend.title = element_text(size=12, face="bold"),
+     #    legend.text = element_text(size=12, face="bold"),
+        axis.title=element_text(colour="black", size = 15,face="bold"),
+        axis.text=element_text(colour="black", size = 13,face="bold"),
+        plot.background = element_rect(fill = "transparent",colour = NA))
+
+pc_plot_13
+
+pc_plot_23 <- ggplot(data=mysis_sam_tbl,aes(x=PC2, y=PC3, fill=Lake_name)) +
+    scale_fill_manual(values = myCol2)+
+  #stat_ellipse(data=mysis_sam_tbl,aes(x=PC1, y=PC2, color=Lake_name),type = "norm") + #add ellipses
+  geom_point(shape=21,  color="black", size=4) +# the shrimp
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_vline(xintercept = 0, lty = 2) +
+   theme_few()+
+   labs(fill = "Lake Name")+ xlab("PC Axis 2 (0.82%)") + ylab("PC Axis 3 (0.81%)") +
+   theme(
+     # legend.position =c(.18,.28),
+     #    legend.justification = c("right", "top"),
+     #    legend.title = element_text(size=12, face="bold"),
+     #    legend.text = element_text(size=12, face="bold"),
+        axis.title=element_text(colour="black", size = 15,face="bold"),
+        axis.text=element_text(colour="black", size = 13,face="bold"),
+        plot.background = element_rect(fill = "transparent",colour = NA))
+
+pc_plot_23
+
+
+
+```
+
+It's hard to discern how many clusters there could be. So we can use DAPC to try and pick out genetic clusters.
+DAPC transforms your data to maximize the differences among the assigned groups. Basically, PCA is used to create related groups (PCs). The number of PCs retained greatly influences the end results, so cross-validation is required to identify how many PCs to retain in the final analysis. Discriminant analysis (DA) is then applied to maximize the difference between assigned genetic clusters. As opposed to Bayesian approaches, which use a priori groups, this multivariate method does not make assumptions about panmixia or other groupings. 
+
+```{r}
+
+mysisvcfr <- read.vcfR("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/neutral_snps/mysis_clean_imputed_neutral.vcf")
+
+mysis_genind <-vcfR2genind(mysisvcfr)
+
+#the individual_ids have the population data too, so need to pull jsut the individual ID so I can merge the population data into the genind correctly 
+
+genfile <- as.data.frame(mysis_genind)
+
+
+individual_id <- as_tibble(rownames(genfile))
+
+individual_id <- separate(individual_id, value ,
+                     c("pop", "indiv", "num", 'num2'))
+
+#replace NA with num
+
+individual_id$num2[is.na(individual_id$num2)] <- as.character(individual_id$num[is.na(individual_id$num2)])
+
+individual_id <- individual_id %>% 
+  mutate(indiv = recode_factor(indiv,"Twin"="LOWT", "Water"="CLER"))
+
+
+individual_id <- individual_id %>% 
+  dplyr::select(c("indiv", "num2"))
+
+individual_id$indiv_id <- paste0(individual_id$indiv, "_", individual_id$num2)
+
+rownames(genfile) <- individual_id$indiv_id
+
+
+#Import the environmental data with the locality information, but filter out the individuals that were removed during filtering  
+
+env <- read.csv("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/mysis_env.csv")
+
+env$Lake_name <- as.factor(env$Lake_name) 
+
+#make sure the factor levels are correct
+env <- env %>% 
+  mutate(Lake_name = recode_factor(Lake_name,"Clear_Water"= "Clearwater", "Lower_Twin"="Lower Twin","GGross"="Gross (Jumbo)","RGross"="Gross (Regular)")) 
+ 
+
+# #If I wanted to filter individuals use anti_join
+# mysis_filtered <- read.csv("C:/Users/Rebecca/Colostate/GhalamborLab - mysis/data/filtered_data/filtered_individuals.csv") %>% 
+#   dplyr::rename("individual_id"="INDIVIDUALS")
+# 
+# 
+# pred <- anti_join(env, mysis_filtered,  by="individual_id")
+
+
+#order the pred file so that it matches with the genetic data 
+#first extract the rownames form the genfile
+
+env <- env[order(match(env[,1], rownames(genfile))),]
+
+
+#make sure the order of the phenotype and the genetic data are the same
+identical(env$individual_id, rownames(genfile))
+
+
+#Need to first assign all individuals to the correct population
+
+mysis_genind@pop <- as.factor(env$Lake_name) 
+
+
+## population values read in correctly?
+summary(mysis_genind@pop)
+
+####### A. Use cross-validation to determine how many PCs to retain ####### 
+# This checks how many PCs should be retained as the number of PCs directly impacts the DAPC results
+set.seed(999)
+
+xval <- xvalDapc(tab(mysis_genind, NA.method="mean"), pop(mysis_genind), parallel = "multicore", ncpus = 4)
+
+####### B. Use the results from Part D to focus in on how many PCs to retain. Analyze the PCs surrounding the peak in proportion of successful outcome prediction from DAPC cross-validation plot. ####### 
+# Here, we see the peak around 50-90. So, we re-run xvalDAPC with more repetitions around these PC values 
+# This will take a long time to run (about 1 hour)
+
+system.time(xval<-xvalDapc(tab(mysis_genind, NA.method="mean"), pop(mysis_genind), n.pca=40:100, n.rep=100, parallel="multicore", ncpus=4))
+
+####### C. Review the results ####### 
+xval[-1] ## retained 64 PCs & 8 discriminant functions saved
+
+# $n.pca: 56 first PCs of PCA used
+# $n.da: 8 discriminant functions saved
+# $var (proportion of conserved variance): 0.409
+
+#### D. Plot results 
+
+#first read the dapc results as a new data frame
+
+dapc_results <- xval
+
+
+#custom color pallet
+myCol3 <- c("#ff7f00","#1f78b4","#ffff33","#a6cee3","#33a02c", "#C273F9", "#F973CA", "#17A589","#e31a1c" ) # 9 colors for our Lakes plus 2 phenotypes
+
+## With labels to identify clusters by region
+scatter(dapc_results$DAPC,posi.da="bottomright", bg="white",cstar=0, col=myCol3, scree.pca=FALSE)
+
+
+#extract the values from the DAPc model
+
+myssi_dapc <- dapc_results$DAPC
+
+#make sure hte factor level of the lakes in the DAPC results match the labels
+
+dapc_results$DAPC$grp <- factor(dapc_results$DAPC$grp , levels=c("Carter", "Clearwater", "Dillon","Grand", "Gross (Jumbo)", "Gross (Regular)", "Jefferson", "Lower Twin", "Ruedi"))
+
+
+lakes<-c(c("Carter", "Clearwater", "Dillon","Grand", "Gross (Jumbo)", "Gross (Regular)", "Jefferson", "Lower Twin", "Ruedi"))
+
+## With labels for better figure
+scatter(dapc_results$DAPC, cex=1.5, legend=T, txt.leg=lakes, clabel=FALSE, posi.leg="topright", posi.da="bottomright", bg="white",cstar=0, col=myCol3, scree.pca=FALSE, cleg = 0.75, xax = 1, yax = 2, inset.solid = 1)
+
+
+scatter(dapc_results$DAPC, cex=2.5, legend=FALSE, txt.leg=lakes, clabel=FALSE, posi.leg=NA, posi.da="topright", bg="white",cstar=0, col=myCol3, scree.pca=FALSE, cleg = 0.75, xax = 1, yax = 2, inset.solid = 1)
+
+## results suggest Gross morphs are grouped together, Clearwater is separate from other lakes on DA2
+
+
+```
+
+
+Admixture algorithm uses cross-validation to estimate the number of principal components used in models to estimate the optimal number of genetic clusters (K). 
+ANALYSES: To run Admixture, be aware of the path to all relevant files. Here, we worked in an Admixture folder that included the executable and the .bed, .bim, and .fam files with the prefix: mysis_clean_imputed_neutral. 
+
+```{bash}
+## First, we need to identify the optimal number of K-means clusters by running the algorithm across different K values and identifying the K with the lowest cross-validation errors. 
+
+cat admixture_k_opt.sh
+
+#!/bin/bash
+
+### Test to see how many clusters are optimal
+# run the CV
+for K in 1 2 3 4 5 6 7 8 9 10 11 12; \
+do ./admixture --cv mysis_clean_imputed_neutral.bed $K | tee log_fin${K}.out; done
+
+```
+
+Now look at the CV results for each of the runs. 
+
+```{bash}
+# extract CV scores from each run
+grep -h CV log*.out > cv_opt_output.txt
+
+# review the output
+cat cv_opt_output.txt
+# results below
+
+CV error (K=1): 0.25741
+CV error (K=2): 0.26807
+CV error (K=3): 0.28070
+CV error (K=4): 0.29529
+CV error (K=5): 0.31152
+CV error (K=6): 0.32725
+CV error (K=7): 0.34327
+CV error (K=8): 0.35801
+CV error (K=9): 0.37086
+CV error (K=10): 0.38088
+CV error (K=11): 0.39352
+CV error (K=12): 0.40689
+```
+
+Based on the CV errors stored in cv_opt_output.txt, we see that K=1 has the lowest score. Using K = 1 & 2, re-run Admixture. 
+
+```{bash}
+conda activate base
+
+cat admixture_k_final.sh
+
+#note that admixture doesn't like non-human chromosomes so covert to integers 
+awk '{$1="0";print $0}' $FILE.bim > $FILE.bim.tmp
+mv $FILE.bim.tmp $FILE.bim
+
+#can now run admixture
+### Run for optimal K
+for K in 1 2; \
+do ./admixture mysis_clean_imputed_neutral.bed $K; done
+# this will output plink.$K.Q files to use for plotting
+```
+
+PLOT RESULTS: We will read in the .Q files to create the admixture plots as barplots. We will use the .fam for groupings in the plot.
+
+```{r}
+
+### Read in data
+
+tbl2=read.table("C:/Users/Rebecca/Colostate/GhalamborLab - Documents/Group Projects/mysis/data/filtered_data/imputed_data/neutral_snps/admixture/mysis_clean_imputed_neutral_names_fix.2.Q")
+
+tbl2$individual_id <- rownames(gen)
+
+#get the lake names 
+
+tbl2 <- left_join(tbl2, env, by="individual_id")
+
+
+### 2. Set colors for different number of clusters
+myCol2 <-c("royalblue", "wheat")
+
+
+mysis.admixture <- tbl2 %>% 
+  gather(cluster, value, V1:V2, factor_key=TRUE) %>% 
+  group_by(individual_id)
+
+#change the factor levels so it matches with the timeline of source
+mysis.admixture <- mysis.admixture %>% 
+  mutate(Lake_name = recode_factor(Lake_name,"Clearwater"= "Clear Water", "Lower_Twin"="Lower Twin","GGross"="Gross (Jumbo)","RGross"="Gross (Regular)")) 
+
+#make a dummy variable to force the rows to be in the correct order
+Lake <- as.data.frame(c( "Clear Water", "Lower Twin","Grand", "Carter","Dillon","Ruedi","Gross (Jumbo)", "Gross (Regular)", "Jefferson"))
+
+names(Lake)[1] <- "Lake_name"
+
+mysis.admixture <- left_join(Lake,mysis.admixture, by="Lake_name") 
+
+
+#create a dummy variable so that the individuals plot in the correct order
+
+### 3. Plot the different admixture results
+# For adding x-axis with population labels
+# Each row is an individual, column 1 = population, col 2 = individual ID
+
+## K = 2 populations
+
+#Lets visualize the results with a barplot
+snmf.bar <- ggplot(mysis.admixture,aes(fill=cluster, y=value, x=individual_id))+
+  geom_bar( stat="identity",  width=.75 ) +
+    scale_fill_manual(values=c("royalblue","wheat"))+
+  labs(x = "", y = "Ancestry")+
+  theme_few()+ 
+  facet_grid(~fct_inorder(Lake_name), switch = "x", scales = "free", space = "free") +
+  theme(legend.position = "none",
+              axis.ticks.x = element_blank(),
+        axis.text.x = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+     axis.line.x.bottom = element_blank(),
+      axis.line.y.left = element_blank())
+  
+
+snmf.bar
+
+```
+
+
+02- Mantel Test 
+So far, we're not seeing a lot of genetic variance between our lakes. But to quickly test this pattern we will use a mantel test which finds correlations between (dis)similarity matrices, in this case genetic disimilarity and geographic dissimilarity to determine whether spatial genetic structure can be attributed to IBD. Implemented using the mantel function in “vegan” R package, and calculated using the smouse pairwise relatedness between individuals and the proportion of shared alleles. 
+
+We shouldn't expect to see much structure given our previous results, but this will help us more formally test whether some genome wide divergence due to drift has taken place. 
+
+
+
+```{r message=FALSE, warning=FALSE}
+
+##############################################
+## #Calculate genetic distance with a few different methods
+
+##############################################
+
+
+#Effective population size using StrataG
+
+#create gtypes object 
+
+mysis_gtypes <- strataG::genind2gtypes(mysis_genind)
+
+#estimate effective popualtion size of the differnt lakes using ld method Estimate Ne from linkage disequilibrium based on Pearson correlation approximation following Waples et al 2016. 
+
+mysis.Ne <- strataG::ldNe(mysis_gtypes, by.strata =T, ci = 0.95)
+
+
+## proportion of shared alleles genetic distance matrix from adegenet
+mysis.propshared <- propShared(mysis_genind)
+hist(mysis.propshared)
+
+#testing to find the proportion distance by 1- matrix 
+
+mysis.propshared.dist <- 1-mysis.propshared
+
+
+## Genetic distance due to relatedness from popGenReport
+#This takes a long time to run
+
+mysis.relatedness <- gd.smouse(mysis_genind)
+hist(mysis.relatedness)
+
+#convert utm to lat long 
+#first need to select just the colorado points since the zones are different
+
+utmcoorCO<- env %>% 
+  filter(NAD_83_Zone=="13T" | NAD_83_Zone=="13S")
+  
+  
+utmcoor<- SpatialPoints(cbind(utmcoorCO$Easting,utmcoorCO$Northing), proj4string=CRS("+proj=utm + datum=NAD83 +zone=13"))
+latlongcoor<-spTransform(utmcoor, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+
+latlongCO <- cbind.data.frame(utmcoorCO, latlongcoor)%>% 
+  dplyr::rename("Longitude"="coords.x1", 
+                "Latitude"="coords.x2") %>% 
+  dplyr::select(c("individual_id","Longitude","Latitude"))
+
+
+#same thing for the Minnesota point
+
+utmcoorMI <-  env %>% 
+  filter(NAD_83_Zone=="15T")
+  
+utmcoor<- SpatialPoints(cbind(utmcoorMI$Easting,utmcoorMI$Northing), proj4string=CRS("+proj=utm + datum=NAD83 +zone=15"))
+latlongcoor<-spTransform(utmcoor, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+
+latlongMI <- cbind.data.frame(utmcoorMI, latlongcoor)%>% 
+  dplyr::rename("Longitude"="coords.x1", 
+                "Latitude"="coords.x2") %>% 
+  dplyr::select(c("individual_id","Longitude","Latitude"))
+
+latlong <- rbind(latlongCO, latlongMI)
+
+pred <- merge(env, latlong, by= "individual_id")
+
+
+#Geographic data frame
+geo <- pred %>% 
+  dplyr::select(c(individual_id, Latitude, Longitude))
+
+#Calculate the geographic distance 
+d.geo <- geodist::geodist(geo, measure="geodesic") 
+#measure = "geodesic" denotes the very accurate geodesic methods given in Karney (2013) "Algorithms for 
+#geodesics" J Geod 87:43-55, and as provided by the codesf::st_dist() function.
+
+d.geo <- as.dist(d.geo)
+
+#################################
+##   Mantel test               ##        
+#################################
+
+#testing hypothesis that closer-together samples (smaller distance between sample locations) are more similar than farther-apart samples.
+
+#run the mantel test for the proportion of shared alleles distance
+vegan::mantel(mysis.propshared.dist, d.geo, method = "pearson", permutations = 99999, na.rm = TRUE)
+# Mantel statistic r: -0.0957 
+#       Significance: 0.94455 
+
+
+#run the mantel test for smouse-distance based on relatedness  
+vegan::mantel(mysis.relatedness, d.geo, method = "pearson", permutations = 99999, na.rm = TRUE)
+
+# Mantel statistic r: -0.1086 
+#       Significance: 0.96626 
+
+
+```
+We see (highly) non-significant results for our mantel tests with both measures of genetic distance (both with the non-imputed and imputed data shown here), which shows that geographically closer populations are not more similar to each other than further apart populations. This fists with what we know about the system since all populations have been sources from the same lake in MI and then CO, so there have been multiple genetic bottlenecks. 
+
+
+This lack of variation is actually a good thing. Because there is no significant hierarchical population structure, we can run analyses of selection using GEA analyses without worrying about spurious associations due to population genetic structure. 
+
