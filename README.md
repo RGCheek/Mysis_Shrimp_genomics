@@ -1,11 +1,12 @@
-# Mysis_Shrimp_genomics
+# Mysis Shrimp Genomics
 
 
-This repository includes all the data and scripts necessary to replicate analyses for the Mysis shrimp dataset. 
+## This repository includes all the data and scripts necessary to replicate analyses for the Mysis shrimp dataset
 
 All files in this repository are liscenced under terms of the Creative Commons Attribution-NonCommercial License, which permits use, distribution and reproduction in any medium, provided the original work is properly cited and is not used for commercial purposes.
 
-Scripts are all in R markdown files with annotations and some personal commentary to help interperpret the data:
+**Scripts**
+All in R markdown files with annotations and some personal commentary to help interperpret the data:
 001- Bioinformatics Pipeline Final.Rmd
           This includes workflow used to de-multiplex, and filter the raw ddRAD data from Admera Health. 
 stacks_tests.xlsx
@@ -18,7 +19,7 @@ stacks_tests.xlsx
          Workflow to generate FST outlier SNP list that were filtered out of the dataset for "neutral" popualtion genetics, code for redundancy analysis and adaptive PCA. 
          
 
-data
+**Data**
 
 blast_fasta_RDA.fasta
       350 bp consensus sequences around each candidate SNP flagged by redundancy analysis. Note some of the reads were flagged as truncated by samtools
