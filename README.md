@@ -3,7 +3,7 @@
 
 ## This repository includes all the data and scripts necessary to replicate analyses for the Mysis shrimp dataset
 
-### All files in this repository are liscenced under terms of the Creative Commons Attribution-NonCommercial License under R. G. C., which permits use, distribution and reproduction in any medium, provided the original work is properly cited and is not used for commercial purposes.
+### All files in this repository are liscenced under terms of the Creative Commons Attribution-NonCommercial License under R. G. C., which permits use, distribution and reproduction in any medium, provided the original work is properly cited and is not used for commercial purposes. This work is currently under peer-review at *Evolutionary Applications*. 
 
 ### Scripts
 
