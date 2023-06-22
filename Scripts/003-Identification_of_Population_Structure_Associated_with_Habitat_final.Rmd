@@ -781,7 +781,7 @@ identical(env$individual_id, rownames(gen))
 ##plot PCA in ordination space
 ###### To highlight individuals by library 
 #custom color pallet
-myCol2 <- c("#ff7f00","#1f78b4","#ffff33","#a6cee3","#33a02c", "#C273F9", "#F973CA", "#17A589" ) # 9 colors for our Lakes plus 2 phenotypes
+myCol2 <- c("#ff7f00","#1f78b4","#ffff33","#a6cee3","#33a02c", "#C273F9", "#F973CA", "#17A589" ) # 8 colors for our Lakes
 
 
 #Extract the scores from the pca
