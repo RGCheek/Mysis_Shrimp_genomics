@@ -29,7 +29,7 @@ This includes workflow used to de-multiplex, and filter the raw ddRAD data from 
 **blast_fasta_pcadapt.fasta**
       350 bp consensus sequences around each candidate SNP flagged by PCADAPT. Note some of the reads were flagged as truncated by samtools
         
-**mysis_10_percent_missing_mac_1.vcf**
+**mysis_clean_10_for_neutral_popstats.vcf**
        3,803 SNPs generated following the recommendations of Schmidt et al. 2021 for popualtion genetic statistics. None of these SNPs were found in the adaptive SNP list from PCAdapt, or RDA, so they are likely unbiased by strong FST outliers or selection.
        
 **mysis_clean_imputed_names_fix.vcf**
